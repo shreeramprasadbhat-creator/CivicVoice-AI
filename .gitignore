@@ -1,0 +1,35 @@
+# Secrets
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+
+# Python
+**/venv/
+**/__pycache__/
+*.py[cod]
+
+# Next.js
+**/.next/
+**/node_modules/
+**/out/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Backend backup files
+backend/main_backup.py
+backend/main_backup_before_multilingual.py
+backend/main_backup_voice_email.py
+
+frontend/app/VoiceRecorder_backup.tsx

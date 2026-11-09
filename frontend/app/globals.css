@@ -1,0 +1,211 @@
+
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* =====================================
+   CivicVoice AI - Workflow Canvas
+===================================== */
+
+.workflow-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #38bdf8 #172d49;
+  scroll-behavior: smooth;
+}
+
+.workflow-scroll::-webkit-scrollbar {
+  height: 5px;
+}
+
+.workflow-scroll::-webkit-scrollbar-track {
+  background: #172d49;
+  border-radius: 10px;
+}
+
+.workflow-scroll::-webkit-scrollbar-thumb {
+  background: #38bdf8;
+  border-radius: 10px;
+}
+
+.workflow-track {
+  display: flex;
+  align-items: center;
+  width: max-content;
+  min-width: 100%;
+  padding: 12px 0;
+}
+
+.workflow-step {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.workflow-node {
+  position: relative;
+  width: 112px;
+  min-width: 112px;
+  min-height: 150px;
+  flex: 0 0 112px;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 12px;
+  background: #172d49;
+  overflow-wrap: break-word;
+  word-break: normal;
+  animation: workflow-glow 3s ease-in-out infinite;
+}
+
+.workflow-node * {
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+.workflow-blue {
+  animation-delay: 0.7s;
+}
+
+.workflow-violet {
+  animation-delay: 1.4s;
+}
+
+.workflow-emerald {
+  animation-delay: 2.1s;
+}
+
+.workflow-connector {
+  position: relative;
+  width: 24px;
+  min-width: 24px;
+  height: 2px;
+  flex: 0 0 24px;
+  background: rgba(148, 163, 184, 0.35);
+  overflow: hidden;
+}
+
+.workflow-packet {
+  position: absolute;
+  top: -2px;
+  left: -10px;
+  width: 9px;
+  height: 6px;
+  border-radius: 10px;
+  background: #67e8f9;
+  box-shadow: 0 0 12px #67e8f9;
+  animation: workflow-flow 1.8s linear infinite;
+}
+
+.workflow-step:nth-child(2) .workflow-packet {
+  animation-delay: 0.5s;
+}
+
+.workflow-step:nth-child(3) .workflow-packet {
+  animation-delay: 1s;
+}
+
+.workflow-step:nth-child(4) .workflow-packet {
+  animation-delay: 1.5s;
+}
+
+.workflow-step:nth-child(5) .workflow-packet {
+  animation-delay: 2s;
+}
+
+@keyframes workflow-flow {
+  from {
+    left: -10px;
+  }
+
+  to {
+    left: 100%;
+  }
+}
+
+@keyframes workflow-glow {
+  0%, 100% {
+    border-color: rgba(148, 163, 184, 0.25);
+  }
+
+  50% {
+    border-color: rgba(103, 232, 249, 0.65);
+    box-shadow: 0 0 16px rgba(34, 211, 238, 0.12);
+  }
+}
+
+@media (max-width: 480px) {
+  .workflow-node {
+    width: 105px;
+    min-width: 105px;
+    flex-basis: 105px;
+    min-height: 145px;
+  }
+
+  .workflow-connector {
+    width: 18px;
+    min-width: 18px;
+    flex-basis: 18px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workflow-node,
+  .workflow-packet {
+    animation: none;
+  }
+}
+
+/* =====================================
+   CivicVoice AI - Map Marker
+===================================== */
+
+.civicvoice-map-marker {
+  background: transparent;
+  border: none;
+}
+
+.civicvoice-map-marker-pin {
+  width: 26px;
+  height: 26px;
+  background: #dc2626;
+  border: 3px solid white;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.civicvoice-map-marker-pin span {
+  display: block;
+  width: 7px;
+  height: 7px;
+  margin: 6px;
+  background: white;
+  border-radius: 50%;
+}
