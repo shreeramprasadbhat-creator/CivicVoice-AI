@@ -33,3 +33,6 @@ backend/main_backup_before_multilingual.py
 backend/main_backup_voice_email.py
 
 frontend/app/VoiceRecorder_backup.tsx
+# Local migration and backup files
+backend/main_before_postgres.py
+backend/migrate_sqlite_to_neon.py

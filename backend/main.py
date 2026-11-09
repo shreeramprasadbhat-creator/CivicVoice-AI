@@ -91,12 +91,18 @@ def require_admin(authorization: str | None = Header(default=None)):
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid or expired admin token.")
 
+cors_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000"
-    ],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -113,118 +119,205 @@ SUPPORTED_LANGUAGES = {
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "civicvoice.db")
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+
+class CompatRow(dict):
+    """Row supporting both row['column'] and row[0] access."""
+
+    def __getitem__(self, key):
+        if isinstance(key, int):
+            return list(self.values())[key]
+        return super().__getitem__(key)
+
+
+def compat_row_factory(cursor):
+    if cursor.description is None:
+        from psycopg.rows import tuple_row
+        return tuple_row(cursor)
+
+    column_names = [column.name for column in cursor.description]
+
+    def make_row(values):
+        return CompatRow(zip(column_names, values))
+
+    return make_row
+
+
+class DatabaseConnection:
+    """Small adapter that keeps existing SQLite-style calls portable."""
+
+    def __init__(self, connection, is_postgres=False):
+        self.connection = connection
+        self.is_postgres = is_postgres
+
+    def execute(self, query, params=()):
+        if self.is_postgres:
+            query = query.replace("?", "%s")
+        return self.connection.execute(query, params)
+
+    def commit(self):
+        self.connection.commit()
+
+    def rollback(self):
+        self.connection.rollback()
+
+    def close(self):
+        self.connection.close()
 
 
 def get_db_connection():
+    if DATABASE_URL:
+        import psycopg
+
+        connection = psycopg.connect(
+            DATABASE_URL,
+            row_factory=compat_row_factory,
+            connect_timeout=15,
+        )
+        return DatabaseConnection(connection, is_postgres=True)
+
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
-    return connection
+    return DatabaseConnection(connection)
 
 
 def initialize_database():
     connection = get_db_connection()
+    is_postgres = connection.is_postgres
 
-    connection.execute("""
-        CREATE TABLE IF NOT EXISTS complaints (
-            complaint_id TEXT PRIMARY KEY,
-            description TEXT NOT NULL,
-            location TEXT NOT NULL,
-            category TEXT NOT NULL,
-            severity TEXT NOT NULL,
-            priority TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Pending',
-            created_at TEXT NOT NULL,
-            latitude REAL,
-            longitude REAL
-        )
-    """)
-
-    columns = connection.execute(
-        "PRAGMA table_info(complaints)"
-    ).fetchall()
-    column_names = [column["name"] for column in columns]
-
-    if "email" not in column_names:
-        connection.execute(
-            "ALTER TABLE complaints ADD COLUMN email TEXT"
-        )
-
-    if "latitude" not in column_names:
-        connection.execute("ALTER TABLE complaints ADD COLUMN latitude REAL")
-
-    if "longitude" not in column_names:
-        connection.execute("ALTER TABLE complaints ADD COLUMN longitude REAL")
-
-    # Each citizen's submission is stored separately, even when several
-    # reports are grouped under one primary complaint.
-    connection.execute("""
-        CREATE TABLE IF NOT EXISTS complaint_reports (
-            report_id TEXT PRIMARY KEY,
-            complaint_id TEXT NOT NULL,
-            description TEXT NOT NULL,
-            location TEXT NOT NULL,
-            email TEXT,
-            created_at TEXT NOT NULL,
-            latitude REAL,
-            longitude REAL,
-            FOREIGN KEY (complaint_id)
-                REFERENCES complaints (complaint_id)
-        )
-    """)
-
-    report_columns = connection.execute(
-        "PRAGMA table_info(complaint_reports)"
-    ).fetchall()
-    report_column_names = [column["name"] for column in report_columns]
-
-    if "latitude" not in report_column_names:
-        connection.execute("ALTER TABLE complaint_reports ADD COLUMN latitude REAL")
-
-    if "longitude" not in report_column_names:
-        connection.execute("ALTER TABLE complaint_reports ADD COLUMN longitude REAL")
-
-    if "language_code" not in report_column_names:
-        connection.execute(
-            "ALTER TABLE complaint_reports ADD COLUMN language_code TEXT NOT NULL DEFAULT 'en-IN'"
-        )
-
-    # Preserve reports already present in older versions of the database.
-    existing_complaints = connection.execute("""
-        SELECT complaint_id, description, location, email, created_at,
-               latitude, longitude
-        FROM complaints
-    """).fetchall()
-
-    for row in existing_complaints:
+    try:
         connection.execute("""
-            INSERT OR IGNORE INTO complaint_reports (
-                report_id, complaint_id, description,
-                location, email, created_at, latitude, longitude
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            f"legacy-{row['complaint_id']}",
-            row["complaint_id"],
-            row["description"],
-            row["location"],
-            row["email"],
-            row["created_at"],
-            row["latitude"],
-            row["longitude"],
-        ))
+            CREATE TABLE IF NOT EXISTS complaints (
+                complaint_id TEXT PRIMARY KEY,
+                description TEXT NOT NULL,
+                location TEXT NOT NULL,
+                category TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                priority TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'Pending',
+                created_at TEXT NOT NULL,
+                email TEXT,
+                latitude REAL,
+                longitude REAL
+            )
+        """)
 
-    connection.execute("""
-        CREATE INDEX IF NOT EXISTS idx_reports_complaint_id
-        ON complaint_reports (complaint_id)
-    """)
+        connection.execute("""
+            CREATE TABLE IF NOT EXISTS complaint_reports (
+                report_id TEXT PRIMARY KEY,
+                complaint_id TEXT NOT NULL,
+                description TEXT NOT NULL,
+                location TEXT NOT NULL,
+                email TEXT,
+                created_at TEXT NOT NULL,
+                latitude REAL,
+                longitude REAL,
+                language_code TEXT NOT NULL DEFAULT 'en-IN',
+                FOREIGN KEY (complaint_id)
+                    REFERENCES complaints (complaint_id)
+            )
+        """)
 
-    connection.commit()
-    connection.close()
+        if is_postgres:
+            column_updates = [
+                ("complaints", "email", "TEXT"),
+                ("complaints", "latitude", "REAL"),
+                ("complaints", "longitude", "REAL"),
+                ("complaint_reports", "latitude", "REAL"),
+                ("complaint_reports", "longitude", "REAL"),
+                (
+                    "complaint_reports",
+                    "language_code",
+                    "TEXT NOT NULL DEFAULT 'en-IN'",
+                ),
+            ]
+
+            for table, column, definition in column_updates:
+                connection.execute(
+                    f"ALTER TABLE {table} "
+                    f"ADD COLUMN IF NOT EXISTS {column} {definition}"
+                )
+        else:
+            table_columns = {
+                "complaints": {
+                    "email": "TEXT",
+                    "latitude": "REAL",
+                    "longitude": "REAL",
+                },
+                "complaint_reports": {
+                    "latitude": "REAL",
+                    "longitude": "REAL",
+                    "language_code": "TEXT NOT NULL DEFAULT 'en-IN'",
+                },
+            }
+
+            for table, required_columns in table_columns.items():
+                existing_columns = {
+                    row["name"]
+                    for row in connection.execute(
+                        f"PRAGMA table_info({table})"
+                    ).fetchall()
+                }
+
+                for column, definition in required_columns.items():
+                    if column not in existing_columns:
+                        connection.execute(
+                            f"ALTER TABLE {table} "
+                            f"ADD COLUMN {column} {definition}"
+                        )
+
+        # Backfill legacy complaints in the selected database.
+        # Existing local SQLite records are transferred to Neon separately.
+        existing_complaints = connection.execute("""
+            SELECT complaint_id, description, location, email, created_at,
+                   latitude, longitude
+            FROM complaints
+        """).fetchall()
+
+        for row in existing_complaints:
+            insert_sql = """
+                INSERT INTO complaint_reports (
+                    report_id, complaint_id, description,
+                    location, email, created_at, latitude, longitude
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            if is_postgres:
+                insert_sql += " ON CONFLICT (report_id) DO NOTHING"
+            else:
+                insert_sql = insert_sql.replace(
+                    "INSERT INTO", "INSERT OR IGNORE INTO", 1
+                )
+
+            connection.execute(insert_sql, (
+                f"legacy-{row['complaint_id']}",
+                row["complaint_id"],
+                row["description"],
+                row["location"],
+                row["email"],
+                row["created_at"],
+                row["latitude"],
+                row["longitude"],
+            ))
+
+        connection.execute("""
+            CREATE INDEX IF NOT EXISTS idx_reports_complaint_id
+            ON complaint_reports (complaint_id)
+        """)
+
+        connection.commit()
+
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def normalize_location(location):
     """Normalize spacing, case and punctuation for location comparison."""
     value = unicodedata.normalize("NFKC", location).casefold()
-    value = re.sub(r"[^\\w\\s]", " ", value, flags=re.UNICODE)
+    value = re.sub(r"[^\w\s]", " ", value, flags=re.UNICODE)
     return " ".join(value.split())
 
 
@@ -237,8 +330,8 @@ def description_similarity(first, second):
         None, first_text, second_text
     ).ratio()
 
-    first_words = set(re.findall(r"\\w+", first_text, flags=re.UNICODE))
-    second_words = set(re.findall(r"\\w+", second_text, flags=re.UNICODE))
+    first_words = set(re.findall(r"\w+", first_text, flags=re.UNICODE))
+    second_words = set(re.findall(r"\w+", second_text, flags=re.UNICODE))
 
     if not first_words or not second_words:
         return sequence_score
@@ -252,8 +345,7 @@ def description_similarity(first, second):
 def find_matching_complaint(connection, description, location, category):
     """
     Match only open complaints with the same category and normalized
-    location. Require meaningful description similarity to avoid
-    combining unrelated issues at the same address.
+    location. Require meaningful description similarity.
     """
     normalized = normalize_location(location)
 
@@ -372,10 +464,6 @@ def send_email(recipient, subject, body, audio_bytes=None, audio_filename=None):
 
         print(f"Email sent successfully to {recipient}")
         return True
-
-    except Exception as error:
-        print("Email sending failed:", str(error))
-        return False
 
     except Exception as error:
         print("Email sending failed:", str(error))
