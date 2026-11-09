@@ -133,13 +133,12 @@ class CompatRow(dict):
 
 def compat_row_factory(cursor):
     if cursor.description is None:
-        from psycopg.rows import tuple_row
-        return tuple_row(cursor)
+        return None
 
     column_names = [column.name for column in cursor.description]
 
     def make_row(values):
-        return CompatRow(zip(column_names, values))
+        return CompatRow(dict(zip(column_names, values)))
 
     return make_row
 
@@ -430,12 +429,58 @@ def generate_email_audio(text, language_code):
 
 
 def send_email(recipient, subject, body, audio_bytes=None, audio_filename=None):
+    """Send transactional email through Brevo API in production.
 
+    For local development only, retain Gmail SMTP as a fallback when no
+    Brevo API key is configured.
+    """
+    brevo_api_key = os.getenv("BREVO_API_KEY")
+    sender_email = os.getenv("BREVO_SENDER_EMAIL") or os.getenv("SMTP_EMAIL")
+    sender_name = os.getenv("BREVO_SENDER_NAME", "CivicVoice AI")
+
+    if brevo_api_key:
+        if not sender_email:
+            print("BREVO_SENDER_EMAIL is missing; email not sent.")
+            return False
+
+        payload = {
+            "sender": {"name": sender_name, "email": sender_email},
+            "to": [{"email": recipient}],
+            "subject": subject,
+            "textContent": body,
+        }
+        if audio_bytes:
+            payload["attachment"] = [{
+                "name": audio_filename or "CivicVoice_Notification.wav",
+                "content": base64.b64encode(audio_bytes).decode("ascii"),
+            }]
+
+        try:
+            response = requests.post(
+                "https://api.brevo.com/v3/smtp/email",
+                headers={
+                    "accept": "application/json",
+                    "api-key": brevo_api_key,
+                    "content-type": "application/json",
+                },
+                json=payload,
+                timeout=25,
+            )
+            response.raise_for_status()
+            print(f"Brevo email accepted for delivery to {recipient}")
+            return True
+        except requests.RequestException as error:
+            detail = ""
+            if getattr(error, "response", None) is not None:
+                detail = error.response.text[:1000]
+            print("Brevo email sending failed:", str(error), detail)
+            return False
+
+    # Local-development fallback. Render production should use Brevo.
     smtp_email = os.getenv("SMTP_EMAIL")
     smtp_password = os.getenv("SMTP_APP_PASSWORD")
-
     if not smtp_email or not smtp_password:
-        print("SMTP credentials are missing.")
+        print("Email credentials are missing (configure BREVO_API_KEY and BREVO_SENDER_EMAIL).")
         return False
 
     message = EmailMessage()
@@ -443,33 +488,24 @@ def send_email(recipient, subject, body, audio_bytes=None, audio_filename=None):
     message["From"] = smtp_email
     message["To"] = recipient
     message.set_content(body)
-
     if audio_bytes:
         message.add_attachment(
             audio_bytes,
             maintype="audio",
             subtype="wav",
-            filename=audio_filename or "CivicVoice_Notification.wav"
+            filename=audio_filename or "CivicVoice_Notification.wav",
         )
-
     try:
-        with smtplib.SMTP_SSL(
-            "smtp.gmail.com",
-            465,
-            timeout=20
-        ) as server:
-
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as server:
             server.login(smtp_email, smtp_password)
             server.send_message(message)
-
         print(f"Email sent successfully to {recipient}")
         return True
-
     except Exception as error:
         print("Email sending failed:", str(error))
         traceback.print_exc()
         return False
-    
+
 EMAIL_TRANSLATIONS = {
     "en-IN": {
         "registered_subject": "CivicVoice AI - Complaint Registered",
